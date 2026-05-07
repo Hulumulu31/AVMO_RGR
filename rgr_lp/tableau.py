@@ -25,7 +25,7 @@ def format_tableau(tableau: Tableau, m: int, n: int, basis: list[int] | None = N
     Столбцы: x1..xn и CO (свободные члены).
     Последняя строка: Z.
     """
-    headers = [f"x{j+1}" for j in range(n)] + [" 1"]
+    headers = [f"x{j+1}" for j in range(n)] + ["CO"]
     rows = []
     for i in range(m):
         bp = f"x{basis[i]+1}" if basis is not None and basis[i] >= 0 else "-"

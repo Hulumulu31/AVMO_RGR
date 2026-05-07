@@ -5,7 +5,7 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
-from rgr_lp.io import read_matrix
+from rgr_lp.io import read_problem
 from rgr_lp.solver import solve_lp_canonical
 
 
@@ -34,9 +34,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    mat = read_matrix(args.input)
-    result = solve_lp_canonical(mat, steps=not args.no_steps)
+    sense, mat = read_problem(args.input)
+    result = solve_lp_canonical(mat, sense=sense, steps=not args.no_steps)
 
+    print(f"Задача: {sense.upper()}")
     print(f"Статус: {result.status}")
     if result.message:
         print(result.message)

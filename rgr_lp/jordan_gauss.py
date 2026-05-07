@@ -43,50 +43,64 @@ def find_initial_basis_by_jordan(
         print_fn("Начальная таблица:")
         print_fn(format_tableau(tableau, m=m, n=n, basis=basis))
 
-    # Идём по столбцам переменных; пытаемся включить переменную в базис, делая pivot.
-    for col in range(n):
-        # уже базисный столбец?
-        if col in basis:
-            continue
+    # Идём по столбцам 0..n-1 и повторяем проходы, пока не получится базис размера m.
+    # После pivot коэффициенты меняются: столбец, в котором раньше не было положительного
+    # элемента в свободной строке, на следующем проходе может подойти (как в классной работе).
+    max_passes = max(n * m, 1) * 10
+    pass_num = 0
+    while len(used_rows) < m and pass_num < max_passes:
+        pass_num += 1
+        progress_this_pass = False
 
-        if steps:
-            print_fn(f"\nВыбираем столбец x{col+1} для попытки ввода в базис.")
+        if steps and pass_num > 1:
+            print_fn(f"\n--- Проход по столбцам №{pass_num} (ещё свободные строки: {m - len(used_rows)}) ---")
 
-        # минимум отношения b_i / a_i,col среди a_i,col > 0
-        best_row = None
-        best_ratio = None
-        for row in range(m):
-            if row in used_rows:
+        for col in range(n):
+            if len(used_rows) == m:
+                break
+            # уже базисный столбец?
+            if col in basis:
                 continue
-            a = tableau[row][col]
-            if a <= 0:
-                continue
-            b = tableau[row][n]
-            ratio = b / a
-            if best_ratio is None or ratio < best_ratio:
-                best_ratio = ratio
-                best_row = row
 
-        if best_row is None:
             if steps:
-                print_fn("  Нет подходящей строки (в столбце нет положительных элементов).")
-            continue
+                print_fn(f"\nВыбираем столбец x{col+1} для попытки ввода в базис.")
 
-        if steps:
-            print_fn(
-                f"  Разрешающая строка: {best_row+1} (мин. отношение b/a = {best_ratio})."
-            )
-            print_fn(f"  Разрешающий элемент: a[{best_row+1},{col+1}] = {tableau[best_row][col]}")
+            # минимум отношения b_i / a_i,col среди a_i,col > 0 в строках без базиса
+            best_row = None
+            best_ratio = None
+            for row in range(m):
+                if row in used_rows:
+                    continue
+                a = tableau[row][col]
+                if a <= 0:
+                    continue
+                b = tableau[row][n]
+                ratio = b / a
+                if best_ratio is None or ratio < best_ratio:
+                    best_ratio = ratio
+                    best_row = row
 
-        pivot(tableau, Pivot(best_row, col))
-        basis[best_row] = col
-        used_rows.add(best_row)
+            if best_row is None:
+                if steps:
+                    print_fn("  Нет подходящей строки (в столбце нет положительных элементов).")
+                continue
 
-        if steps:
-            print_fn("  После преобразования:")
-            print_fn(format_tableau(tableau, m=m, n=n, basis=basis))
+            if steps:
+                print_fn(
+                    f"  Разрешающая строка: {best_row+1} (мин. отношение b/a = {best_ratio})."
+                )
+                print_fn(f"  Разрешающий элемент: a[{best_row+1},{col+1}] = {tableau[best_row][col]}")
 
-        if len(used_rows) == m:
+            pivot(tableau, Pivot(best_row, col))
+            basis[best_row] = col
+            used_rows.add(best_row)
+            progress_this_pass = True
+
+            if steps:
+                print_fn("  После преобразования:")
+                print_fn(format_tableau(tableau, m=m, n=n, basis=basis))
+
+        if not progress_this_pass:
             break
 
     if any(j < 0 for j in basis):

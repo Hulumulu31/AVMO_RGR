@@ -11,7 +11,36 @@ from .simplex import (
     iterate_simplex,
     zero_reduced_cost_nonbasic,
 )
-from .tableau import Tableau, extract_plan, fmt_frac, objective_value, pivot, Pivot
+from .tableau import Tableau, extract_plan, fmt_frac, format_tableau, objective_value, pivot, Pivot
+
+
+def _print_tableau_with_nb_zero(
+    tableau: Tableau,
+    basis: list[int],
+    m: int,
+    n: int,
+    *,
+    title: str,
+    print_fn: Callable[[str], None],
+    sense: str,
+    z_display: Fraction | None = None,
+) -> None:
+    """Печать симплекс-таблицы и явная подстановка небазисных переменных = 0."""
+    print_fn(title)
+    print_fn(format_tableau(tableau, m=m, n=n, basis=basis))
+    basis_set = set(basis)
+    nb = [j for j in range(n) if j not in basis_set]
+    if nb:
+        names = ", ".join(f"x{j+1}=0" for j in nb)
+        print_fn(f"Подстановка (небазисные переменные): {names}.")
+    x = extract_plan(tableau, basis=basis, n=n, m=m)
+    print_fn("Текущий опорный план из столбца CO (при этом):")
+    for j in range(n):
+        print_fn(f"  x{j+1} = {fmt_frac(x[j])}")
+    z_tbl = objective_value(tableau, n=n, m=m)
+    z_out = z_display if z_display is not None else (z_tbl if sense == "max" else -z_tbl)
+    print_fn(f"Значение целевой функции ({sense}): Z = {fmt_frac(z_out)}  "
+             f"(в таблице после сведения к max: нижний правый элемент = {fmt_frac(z_tbl)}).")
 
 
 @dataclass(frozen=True)
@@ -41,6 +70,7 @@ class SolveResult:
     x: list[Fraction]
     z: Fraction
     c: list[Fraction]
+    sense: str = "max"  # "max" | "min"
     message: str | None = None
     general_solution: GeneralSolution | None = None
     parametric_optimal_set: ParametricOptimalSet | None = None
@@ -49,6 +79,7 @@ class SolveResult:
 def solve_lp_canonical(
     mat: Matrix,
     *,
+    sense: str = "max",
     steps: bool = False,
     print_fn: Callable[[str], None] | None = None,
 ) -> SolveResult:
@@ -63,7 +94,12 @@ def solve_lp_canonical(
     m = m_plus_1 - 1
     n = n_plus_1 - 1
 
-    c = mat[m][:n]
+    c_in = mat[m][:n]
+    if sense not in ("max", "min"):
+        raise ValueError("sense must be 'max' or 'min'")
+
+    # Минимизацию сводим к максимизации: min c^T x == max (-c)^T x.
+    c = c_in if sense == "max" else [-ci for ci in c_in]
 
     # Формируем таблицу: m строк ограничений + Z-строка.
     # Z-строка хранит -c (как в лекции 4): оптимум, когда все элементы >= 0.
@@ -81,7 +117,8 @@ def solve_lp_canonical(
             status="INFEASIBLE",
             x=[Fraction(0) for _ in range(n)],
             z=Fraction(0),
-            c=c,
+            c=c_in,
+            sense=sense,
             message="Не удалось построить опорное решение методом Жордана–Гаусса (возможна несовместность ограничений).",
         )
 
@@ -92,7 +129,8 @@ def solve_lp_canonical(
             status="INFEASIBLE",
             x=[Fraction(0) for _ in range(n)],
             z=Fraction(0),
-            c=c,
+            c=c_in,
+            sense=sense,
             message="Опорный план, найденный Жорданом–Гауссом, не удовлетворяет x>=0.",
         )
 
@@ -102,21 +140,44 @@ def solve_lp_canonical(
             status="UNBOUNDED",
             x=[Fraction(0) for _ in range(n)],
             z=Fraction(0),
-            c=c,
+            c=c_in,
+            sense=sense,
             message="Целевая функция не ограничена сверху (признак неограниченности).",
         )
 
     x_opt = extract_plan(tableau, basis=basis, n=n, m=m)
-    z_opt = objective_value(tableau, n=n, m=m)
+    z_max = objective_value(tableau, n=n, m=m)
+    z_opt = z_max if sense == "max" else -z_max
 
     # Альтернативный оптимум: ищем нулевые оценки у небазисных.
     zeros = zero_reduced_cost_nonbasic(tableau, basis=basis, m=m, n=n)
     vertices: list[list[Fraction]] = [x_opt]
 
+    if steps and zeros:
+        names = ", ".join(f"x{j+1}" for j in zeros)
+        print_fn(
+            f"\nАльтернативный оптимум: у небазисных переменных {names} "
+            "в Z-строке оценка = 0 (можно искать другую оптимальную вершину pivot’ом)."
+        )
+        _print_tableau_with_nb_zero(
+            tableau,
+            basis,
+            m=m,
+            n=n,
+            title="Оптимальная симплекс-таблица (первая найденная вершина X^1):",
+            print_fn=print_fn,
+            sense=sense,
+            z_display=z_opt,
+        )
+
     # Пытаемся построить дополнительные оптимальные опорные планы одним шагом симплекс-преобразования
     # по столбцу с нулевой оценкой (замечание из лекции 4).
     for col in zeros:
         if not can_pivot_in_column(tableau, m=m, n=n, col=col):
+            if steps:
+                print_fn(
+                    f"\nСтолбец x{col+1}: нет положительных элементов — допустимый pivot для другой вершины невозможен."
+                )
             continue
 
         # копируем таблицу и базис
@@ -138,9 +199,46 @@ def solve_lp_canonical(
         if best_row is None:
             continue
 
+        if steps:
+            print_fn(
+                f"\n--- Допустимый pivot при альтернативном оптимуме: вводим x{col+1} в базис ---"
+            )
+            print_fn(
+                "(Таблица до pivot совпадает с оптимальной выше; небазисные по-прежнему полагаются равными 0.)"
+            )
+            print_fn(f"Разрешающий столбец: x{col+1} (нулевая оценка в Z-строке).")
+            print_fn("Симплексные отношения CO_i / a_i,j для a_i,j > 0:")
+            for i in range(m):
+                a = t2[i][col]
+                if a > 0:
+                    print_fn(f"  строка {i+1}: {t2[i][rhs]} / {a} = {t2[i][rhs] / a}")
+            print_fn(
+                f"Разрешающая строка: {best_row + 1}; разрешающий элемент a[{best_row + 1},{col + 1}] = {t2[best_row][col]}."
+            )
+
         pivot(t2, Pivot(best_row, col))
         b2[best_row] = col
         x2 = extract_plan(t2, basis=b2, n=n, m=m)
+
+        if steps:
+            z2_tbl = objective_value(t2, n=n, m=m)
+            z2_out = z2_tbl if sense == "max" else -z2_tbl
+            _print_tableau_with_nb_zero(
+                t2,
+                b2,
+                m=m,
+                n=n,
+                title="Таблица после pivot (новый опорный план; снова подставляем небазисные = 0):",
+                print_fn=print_fn,
+                sense=sense,
+                z_display=z2_out,
+            )
+            print_fn(
+                "Новая точка (координаты): "
+                + "("
+                + ", ".join(fmt_frac(v) for v in x2)
+                + ")"
+            )
 
         if x2 not in vertices:
             vertices.append(x2)
@@ -209,7 +307,8 @@ def solve_lp_canonical(
         status="OPTIMAL",
         x=x_opt,
         z=z_opt,
-        c=c,
+        c=c_in,
+        sense=sense,
         general_solution=general,
         parametric_optimal_set=parametric,
     )
